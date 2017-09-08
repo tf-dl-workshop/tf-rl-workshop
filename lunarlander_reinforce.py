@@ -1,5 +1,4 @@
-""" Trains an agent with (stochastic) Policy Gradients on Pong. Uses OpenAI Gym. """
-
+""" Trains an agent with (stochastic) Policy Gradients on LunarLander. Uses OpenAI Gym. """
 import tensorflow as tf
 import numpy as np
 import gym
@@ -22,8 +21,6 @@ class PolicyNetwork():
                 inputs=self.state,
                 units=16,
                 activation=tf.nn.tanh,  # tanh activation
-                kernel_initializer=tf.random_normal_initializer(mean=0, stddev=0.3),
-                bias_initializer=tf.constant_initializer(0.1),
                 name='FC1'
             )
 
@@ -32,8 +29,6 @@ class PolicyNetwork():
                 inputs=fc1,
                 units=32,
                 activation=tf.nn.tanh,  # tanh activation
-                kernel_initializer=tf.random_normal_initializer(mean=0, stddev=0.3),
-                bias_initializer=tf.constant_initializer(0.1),
                 name='FC2'
             )
 
@@ -42,15 +37,8 @@ class PolicyNetwork():
                 inputs=fc2,
                 units=4,
                 activation=None,
-                kernel_initializer=tf.random_normal_initializer(mean=0, stddev=0.3),
-                bias_initializer=tf.constant_initializer(0.1),
                 name='FC3'
             )
-
-            for t in tf.trainable_variables():
-                tf.summary.histogram(t.name.replace(":", ""), t)
-
-            self.summaries = tf.summary.merge_all()
 
             self.action_prob = tf.nn.softmax(logits)
             neg_log_prob = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=logits, labels=self.action)
@@ -61,22 +49,22 @@ class PolicyNetwork():
             self.train_op = self.optimizer.minimize(
                 self.loss, global_step=tf.contrib.framework.get_global_step())
 
-    def predict(self, state, sess=None):
-        sess = sess or tf.get_default_session()
+    def predict(self, state, sess):
         return sess.run(self.action_prob, {self.state: state})
 
-    def update(self, state, reward, action, writer, num_step, sess=None):
-        sess = sess or tf.get_default_session()
+    def update(self, state, reward, action, num_step, sess):
         feed_dict = {self.state: state, self.reward: reward, self.action: action}
-        summary, _, loss = sess.run([self.summaries, self.train_op, self.loss], feed_dict)
-        writer.add_summary(summary, num_step)
+        _, loss = sess.run([self.train_op, self.loss], feed_dict)
         return loss
+
 
 # hyperparameters
 learning_rate = 0.005
 gamma = 0.99  # discount factor for reward
 resume = True  # resume from previous checkpoint?
-render = True
+render = True  # render the graphic ?
+model_path = "_models/final/model.ckpt"
+
 
 def discount_rewards(r):
     """ take 1D float array of rewards and compute discounted reward """
@@ -102,27 +90,24 @@ policy_network = PolicyNetwork(learning_rate)
 # saver
 saver = tf.train.Saver()
 # session
-sess = tf.InteractiveSession()
+sess = tf.Session()
 sess.run(tf.global_variables_initializer())
 
 if resume:
-    saver.restore(sess, "_models/adagrad/model.ckpt")
-
-writer = tf.summary.FileWriter("_models/histogram", graph=tf.get_default_graph())
-start = time.time()
+    saver.restore(sess, model_path)
 
 while True:
     if render: env.render()
 
-    x = observation
+    current_state = observation
 
     # forward the policy network and sample an action from the returned probability
-    action_prob = policy_network.predict(x[np.newaxis, :], sess)
+    action_prob = policy_network.predict(current_state[np.newaxis, :], sess)
     action = np.random.choice(a=4, p=action_prob.ravel())
 
     # record various intermediates
     action_list.append(action)
-    state_list.append(x)  # observation
+    state_list.append(current_state)  # observation
     # step the environment and get new measurements
 
     observation, reward, done, info = env.step(action)
@@ -133,7 +118,7 @@ while True:
     if done:  # an episode finished
         episode_number += 1
 
-        # stack together all inputs, hidden states, action gradients, and rewards for this episode
+        # stack together all inputs, action and rewards for this episode
         state_batch = np.vstack(state_list)
         action_batch = np.array(action_list)
         reward_batch = np.array(reward_list)
@@ -146,16 +131,19 @@ while True:
         discounted_epr -= np.mean(discounted_epr)
         discounted_epr /= np.std(discounted_epr)
 
-        policy_network.update(state_batch, discounted_epr, action_batch, writer, episode_number, sess)
+        policy_network.update(state_batch, discounted_epr, action_batch, episode_number, sess)
 
-        # boring book-keeping
+        # running_reward
         running_reward = reward_sum if running_reward is None else running_reward * 0.99 + reward_sum * 0.01
 
-        if episode_number % 30 == 0: saver.save(sess, "_models/adagrad/model.ckpt")
         observation = env.reset()  # reset env
         prev_x = None
 
-        print('ep %d: game finished, reward: %f, running_reward: %f' % (
+        print('ep %d: game finished, reward: %.2f, running_reward: %.2f' % (
             episode_number, reward_sum, running_reward))
+
         # reset reward_sum
         reward_sum = 0
+
+        # save the model every 30 episodes
+        if episode_number % 30 == 0: saver.save(sess, model_path)
