@@ -16,14 +16,6 @@ class PolicyNetwork():
             self.state = tf.placeholder(dtype=tf.float32, shape=[None, 8], name="state")
             self.action = tf.placeholder(dtype=tf.int32, shape=[None, ], name="action")
             self.reward = tf.placeholder(dtype=tf.float32, shape=[None, ], name="reward")
-            # reward = tf.Print(self.reward, [self.reward], summarize=100)
-
-            # conv1 = tf.layers.conv2d(self.state, filters=16, kernel_size=[3, 3], strides=[1, 1], padding="same")
-            # pooling1 = tf.layers.max_pooling2d(conv1, pool_size=[2, 2], strides=[2, 2], padding="same")
-            # conv2 = tf.layers.conv2d(pooling1, filters=16, kernel_size=[3, 3], strides=[1, 1], padding="same")
-            # pooling2 = tf.layers.max_pooling2d(conv2, pool_size=[2, 2], strides=[2, 2], padding="same")
-            #
-            # flatten = tf.reshape(pooling2, shape=[-1, 20 * 20 * 16])
 
             # FC1
             fc1 = tf.layers.dense(
@@ -45,7 +37,7 @@ class PolicyNetwork():
                 name='FC2'
             )
 
-            # FC3
+            # logits
             logits = tf.layers.dense(
                 inputs=fc2,
                 units=4,
@@ -80,18 +72,11 @@ class PolicyNetwork():
         writer.add_summary(summary, num_step)
         return loss
 
-
-# UP = 2
-# DOWN = 3
-# # action index
-# action_to_index = {UP: 0, DOWN: 1}
-# index_to_action = {0: UP, 1: DOWN}
-
 # hyperparameters
 learning_rate = 0.005
 gamma = 0.99  # discount factor for reward
-resume = False  # resume from previous checkpoint?
-render = False
+resume = True  # resume from previous checkpoint?
+render = True
 
 def discount_rewards(r):
     """ take 1D float array of rewards and compute discounted reward """
@@ -121,7 +106,7 @@ sess = tf.InteractiveSession()
 sess.run(tf.global_variables_initializer())
 
 if resume:
-    saver.restore(sess, "_models/model.ckpt")
+    saver.restore(sess, "_models/adagrad/model.ckpt")
 
 writer = tf.summary.FileWriter("_models/histogram", graph=tf.get_default_graph())
 start = time.time()
@@ -130,11 +115,6 @@ while True:
     if render: env.render()
 
     x = observation
-
-    # # preprocess the observation, set input to network to be difference image
-    # cur_x = prepro(observation)
-    # x = cur_x - prev_x if prev_x is not None else np.zeros(shape=(80 * 80))
-    # prev_x = cur_x
 
     # forward the policy network and sample an action from the returned probability
     action_prob = policy_network.predict(x[np.newaxis, :], sess)
@@ -171,7 +151,7 @@ while True:
         # boring book-keeping
         running_reward = reward_sum if running_reward is None else running_reward * 0.99 + reward_sum * 0.01
 
-        if episode_number % 30 == 0: saver.save(sess, "_models/model.ckpt")
+        if episode_number % 30 == 0: saver.save(sess, "_models/adagrad/model.ckpt")
         observation = env.reset()  # reset env
         prev_x = None
 
