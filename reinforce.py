@@ -13,28 +13,38 @@ class PolicyNetwork():
 
     def __init__(self, learning_rate, scope="policy_network"):
         with tf.variable_scope(scope):
-            self.state = tf.placeholder(dtype=tf.float32, shape=[None, 80, 80, 1], name="state")
+            self.state = tf.placeholder(dtype=tf.float32, shape=[None, 80 * 80], name="state")
             self.action = tf.placeholder(dtype=tf.int32, shape=[None], name="action")
             self.reward = tf.placeholder(dtype=tf.float32, shape=[None], name="target")
+            # reward = tf.Print(self.reward, [self.reward], summarize=100)
 
-            conv1 = tf.layers.conv2d(self.state, filters=16, kernel_size=[3, 3], strides=[1, 1], padding="same")
-            pooling1 = tf.layers.max_pooling2d(conv1, pool_size=[2, 2], strides=[2, 2], padding="same")
-            conv2 = tf.layers.conv2d(pooling1, filters=16, kernel_size=[3, 3], strides=[1, 1], padding="same")
-            pooling2 = tf.layers.max_pooling2d(conv2, pool_size=[2, 2], strides=[2, 2], padding="same")
+            # conv1 = tf.layers.conv2d(self.state, filters=16, kernel_size=[3, 3], strides=[1, 1], padding="same")
+            # pooling1 = tf.layers.max_pooling2d(conv1, pool_size=[2, 2], strides=[2, 2], padding="same")
+            # conv2 = tf.layers.conv2d(pooling1, filters=16, kernel_size=[3, 3], strides=[1, 1], padding="same")
+            # pooling2 = tf.layers.max_pooling2d(conv2, pool_size=[2, 2], strides=[2, 2], padding="same")
+            #
+            # flatten = tf.reshape(pooling2, shape=[-1, 20 * 20 * 16])
 
-            flatten = tf.reshape(pooling2, shape=[-1, 20 * 20 * 16])
-            fully_connected = tf.layers.dense(flatten, units=128, activation=tf.nn.relu)
-            self.logits = tf.layers.dense(fully_connected, units=2)
+            fully_connected = tf.layers.dense(self.state, units=200, activation=tf.nn.relu,
+                                              kernel_initializer=tf.contrib.layers.xavier_initializer(), use_bias=False)
+            self.logits = tf.layers.dense(fully_connected, units=2,
+                                          kernel_initializer=tf.contrib.layers.xavier_initializer(), use_bias=False)
+            # self.logits = tf.Print(self.logits, [tf.nn.softmax(self.logits)], summarize=100)
             self.sample_action = tf.multinomial(self.logits, 1)
+            # self.sample_action = tf.argmax(self.logits, 1)
+
+            for t in tf.trainable_variables():
+                tf.summary.histogram(t.name.replace(":", ""), t)
+
+            self.summaries = tf.summary.merge_all()
 
             one_hot_action = tf.one_hot(self.action, 2)
             action_prob = tf.nn.softmax(self.logits)
-            action_prob = tf.Print(action_prob, [action_prob], summarize=1000)
             picked_action_prob = tf.matmul(one_hot_action, action_prob, transpose_b=True)
             self.loss = tf.reduce_mean(-tf.log(picked_action_prob) * self.reward)
 
             # Loss and train op
-            self.optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate)
+            self.optimizer = tf.train.RMSPropOptimizer(learning_rate=learning_rate, decay=0.99)
             self.train_op = self.optimizer.minimize(
                 self.loss, global_step=tf.contrib.framework.get_global_step())
 
@@ -42,10 +52,11 @@ class PolicyNetwork():
         sess = sess or tf.get_default_session()
         return sess.run(self.sample_action, {self.state: state})
 
-    def update(self, state, reward, action, sess=None):
+    def update(self, state, reward, action, writer, sess=None):
         sess = sess or tf.get_default_session()
         feed_dict = {self.state: state, self.reward: reward, self.action: action}
-        _, loss = sess.run([self.train_op, self.loss], feed_dict)
+        summary, _, loss = sess.run([self.summaries, self.train_op, self.loss], feed_dict)
+        writer.add_summary(summary)
         return loss
 
 
@@ -56,11 +67,11 @@ action_to_index = {UP: 0, DOWN: 1}
 index_to_action = {0: UP, 1: DOWN}
 
 # hyperparameters
-batch_size = 2  # every how many episodes to do a param update?
-learning_rate = 1e-4
+batch_size = 5  # every how many episodes to do a param update?
+learning_rate = 10e-3
 gamma = 0.99  # discount factor for reward
-resume = False  # resume from previous checkpoint?
-render = False
+resume = True  # resume from previous checkpoint?
+render = True
 
 
 def prepro(I):
@@ -70,7 +81,7 @@ def prepro(I):
     I[I == 144] = 0  # erase background (background type 1)
     I[I == 109] = 0  # erase background (background type 2)
     I[I != 0] = 1  # everything else (paddles, ball) just set to 1
-    return np.expand_dims(I, 3)
+    return I.astype(np.float).ravel()
 
 
 def discount_rewards(r):
@@ -84,8 +95,7 @@ def discount_rewards(r):
     return discounted_r
 
 
-env = gym.make("Pong-v0")
-x = env.unwrapped.get_action_meanings()
+env = gym.make("LunarLander-v2")
 observation = env.reset()
 prev_x = None  # used in computing the difference frame
 state_list, action_list, reward_list = [], [], []
@@ -105,16 +115,19 @@ sess.run(tf.global_variables_initializer())
 if resume:
     saver.restore(sess, "_models/model.ckpt")
 
+writer = tf.summary.FileWriter("_models/histogram")
 start = time.time()
+
 while True:
     if render: env.render()
+
     # preprocess the observation, set input to network to be difference image
     cur_x = prepro(observation)
-    x = cur_x - prev_x if prev_x is not None else np.zeros(shape=(80, 80, 1))
+    x = cur_x - prev_x if prev_x is not None else np.zeros(shape=(80 * 80))
     prev_x = cur_x
 
     # forward the policy network and sample an action from the returned probability
-    a_index = policy_network.predict(np.expand_dims(x, 0))
+    a_index = policy_network.predict(np.expand_dims(x, 0), sess)
     action = index_to_action[int(a_index)]
 
     # record action_index
@@ -148,7 +161,7 @@ while True:
             discounted_epr -= np.mean(discounted_epr)
             discounted_epr /= np.std(discounted_epr)
 
-            loss = policy_network.update(state_batch, discounted_epr, action_batch)
+            loss = policy_network.update(state_batch, discounted_epr, action_batch, writer, sess)
             print("loss " + str(loss))
 
         # boring book-keeping
