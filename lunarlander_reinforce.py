@@ -2,8 +2,7 @@
 import tensorflow as tf
 import numpy as np
 import gym
-import time
-
+from gym.utils.play import *
 
 class PolicyNetwork():
     """
@@ -44,7 +43,7 @@ class PolicyNetwork():
             neg_log_prob = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=logits, labels=self.action)
 
             self.loss = tf.reduce_mean(neg_log_prob * self.reward)
-            # Loss and train op
+            # train op
             self.optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate)
             self.train_op = self.optimizer.minimize(
                 self.loss, global_step=tf.contrib.framework.get_global_step())
@@ -52,7 +51,7 @@ class PolicyNetwork():
     def predict(self, state, sess):
         return sess.run(self.action_prob, {self.state: state})
 
-    def update(self, state, reward, action, num_step, sess):
+    def update(self, state, reward, action, sess):
         feed_dict = {self.state: state, self.reward: reward, self.action: action}
         _, loss = sess.run([self.train_op, self.loss], feed_dict)
         return loss
@@ -63,11 +62,20 @@ learning_rate = 0.005
 gamma = 0.99  # discount factor for reward
 resume = True  # resume from previous checkpoint?
 render = True  # render the graphic ?
-model_path = "_models/final/model.ckpt"
+max_episode_number = 1000  # how many episode we want to run ?
+model_path = "_models/final/model.ckpt"  # path for saving the model
 
 
 def discount_rewards(r):
-    """ take 1D float array of rewards and compute discounted reward """
+    """
+    take 1D float array of rewards and compute discounted rewards (A_t)
+    A_t = R_t + gamma^1 * R_t+1 + gamma^2 * R_t+2 + ... + gamma^(T-t)R_T;
+    where T is the last time step of the episode
+
+    :param r: float array of rewards (R_1, R_2, ..., R_T)
+    :return: float array of discounted reward (A_1, A_2, ..., A_T)
+    """
+
     discounted_r = np.zeros_like(r)
     running_add = 0
     for t in reversed(range(0, r.size)):
@@ -78,12 +86,10 @@ def discount_rewards(r):
 
 
 env = gym.make("LunarLander-v2")
-observation = env.reset()
 state_list, action_list, reward_list = [], [], []
 running_reward = None
 reward_sum = 0
 episode_number = 0
-num_step = 0
 
 policy_network = PolicyNetwork(learning_rate)
 
@@ -96,7 +102,9 @@ sess.run(tf.global_variables_initializer())
 if resume:
     saver.restore(sess, model_path)
 
-while True:
+# start the first episode
+observation = env.reset()
+while episode_number < max_episode_number:
     if render: env.render()
 
     current_state = observation
@@ -108,8 +116,8 @@ while True:
     # record various intermediates
     action_list.append(action)
     state_list.append(current_state)  # observation
-    # step the environment and get new measurements
 
+    # step the environment and get new measurements
     observation, reward, done, info = env.step(action)
     reward_sum += reward
 
@@ -131,13 +139,13 @@ while True:
         discounted_epr -= np.mean(discounted_epr)
         discounted_epr /= np.std(discounted_epr)
 
-        policy_network.update(state_batch, discounted_epr, action_batch, episode_number, sess)
+        # update model variables with data obtained from this episode
+        policy_network.update(state_batch, discounted_epr, action_batch, sess)
 
-        # running_reward
+        # record running_reward to get overview of the improvement so far
         running_reward = reward_sum if running_reward is None else running_reward * 0.99 + reward_sum * 0.01
 
         observation = env.reset()  # reset env
-        prev_x = None
 
         print('ep %d: game finished, reward: %.2f, running_reward: %.2f' % (
             episode_number, reward_sum, running_reward))
