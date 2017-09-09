@@ -2,8 +2,7 @@
 import tensorflow as tf
 import numpy as np
 import gym
-from gym.utils.play import *
-from collections import deque, namedtuple
+from collections import namedtuple
 import random
 
 class ValueNetwork():
