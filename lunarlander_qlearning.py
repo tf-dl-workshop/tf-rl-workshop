@@ -6,38 +6,6 @@ from gym.utils.play import *
 from collections import deque, namedtuple
 import random
 
-
-class ModelParametersCopier():
-    """
-    Copy model parameters of one estimator to another.
-    """
-
-    def __init__(self, estimator1, estimator2):
-        """
-        Defines copy-work operation graph.  
-        Args:
-          estimator1: Estimator to copy the paramters from
-          estimator2: Estimator to copy the parameters to
-        """
-        e1_params = [t for t in tf.trainable_variables() if t.name.startswith(estimator1.scope)]
-        e1_params = sorted(e1_params, key=lambda v: v.name)
-        e2_params = [t for t in tf.trainable_variables() if t.name.startswith(estimator2.scope)]
-        e2_params = sorted(e2_params, key=lambda v: v.name)
-
-        self.update_ops = []
-        for e1_v, e2_v in zip(e1_params, e2_params):
-            op = e2_v.assign(e1_v)
-            self.update_ops.append(op)
-
-    def make(self, sess):
-        """
-        Makes copy.
-        Args:
-            sess: Tensorflow session instance
-        """
-        sess.run(self.update_ops)
-
-
 class ValueNetwork():
     """
     Policy Function approximator. 
@@ -54,7 +22,7 @@ class ValueNetwork():
             fc1 = tf.layers.dense(
                 inputs=self.state,
                 units=64,
-                activation=tf.nn.relu,  # tanh activation
+                activation=tf.nn.relu,
                 name='FC1'
             )
 
@@ -62,7 +30,7 @@ class ValueNetwork():
             fc2 = tf.layers.dense(
                 inputs=fc1,
                 units=64,
-                activation=tf.nn.relu,  # tanh activation
+                activation=tf.nn.relu,
                 name='FC2'
             )
 
@@ -96,17 +64,17 @@ class ValueNetwork():
         return loss
 
 
-# hyperparameters
-learning_rate = 0.005
+# hyperparameters and configurations
+learning_rate = 0.001
 gamma = 0.99  # discount factor for reward
 resume = False  # resume from previous checkpoint?
 render = False  # render the graphic ?
-max_episode_number = 2000  # how many episode we want to run ?
-max_replay_memory = 10000
-batch_size = 64
-train_freq = 16
-epsilon = 1.0
-random_decay = 0.995
+is_train = True # training mode ?
+max_episode_number = 1000  # how many episode we want to run ?
+max_replay_memory = 2000 # maximum size of replay memory
+epsilon_decay_steps = 500 # epsilon decay over time until ?
+batch_size = 32 # training examples per batch
+train_freq = 4 # train the model every "train_freq" steps
 model_path = "_models/qlearning/model.ckpt"  # path for saving the model
 
 Transition = namedtuple("Transition", ["state", "action", "reward", "next_state", "done"])
@@ -120,14 +88,26 @@ num_steps = 0
 loss = None
 
 q_estimator = ValueNetwork(learning_rate, scope="q_estimator")
+# The epsilon decay schedule
+epsilons = np.linspace(1.0, 0.1, epsilon_decay_steps)
 
 
 def epsilon_greedy(q_values, epsilon, action_space_size):
+    """
+    choose action randomly with epsilon probability
+    otherwise choose action with maximum value
+    
+    :param q_values: estimated q values for all actions
+    :param epsilon: exploration probability
+    :param action_space_size: size of action space
+    :return: a chosen action
+    """
     if np.random.rand() < epsilon:
-        return np.random.randint(0, action_space_size)
+        action = np.random.randint(0, action_space_size)
     else:
-        return np.argmax(q_values)
+        action = np.argmax(q_values)
 
+    return action
 
 # saver
 saver = tf.train.Saver()
@@ -142,13 +122,16 @@ if resume:
 observation = env.reset()
 while episode_number < max_episode_number:
     if render: env.render()
-    num_steps += 1
 
     current_state = observation
 
-    # forward the policy network and sample an action from the returned probability
+    # forward the value network and get predicted q values
     q_values = q_estimator.predict(current_state[np.newaxis, :], sess)
 
+    if is_train:
+        epsilon = epsilons[min(episode_number, epsilon_decay_steps-1)]
+    else:
+        epsilon = 0.1
     action = epsilon_greedy(q_values.ravel(), epsilon, 4)
 
     # step the environment and get new measurements
@@ -160,7 +143,9 @@ while episode_number < max_episode_number:
         replay_memory.pop(0)
     replay_memory.append(Transition(current_state, action, reward, observation, done))
 
-    if num_steps % train_freq == 0:
+    num_steps += 1
+
+    if num_steps % train_freq == 0 and is_train:
         # Sample a minibatch from the replay memory
         samples = random.sample(replay_memory, min(len(replay_memory), batch_size))
         states_batch, action_batch, reward_batch, next_states_batch, done_batch = map(np.array, zip(*samples))
@@ -175,9 +160,9 @@ while episode_number < max_episode_number:
 
     if done:
         print("loss: " + str(loss))
+        print("epsilon " + str(epsilon))
         episode_number += 1
-        epsilon *= random_decay
-        print("epsilon: " + str(epsilon))
+
         observation = env.reset()  # reset env
 
         # record running_reward to get overview of the improvement so far
@@ -189,5 +174,5 @@ while episode_number < max_episode_number:
         # reset reward_sum
         reward_sum = 0
 
-        # save the model every 30 episodes
-        if episode_number % 30 == 0: saver.save(sess, model_path)
+        # save the model every 20 episodes
+        if episode_number % 20 == 0: saver.save(sess, model_path)
