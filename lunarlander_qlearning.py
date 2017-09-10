@@ -66,10 +66,10 @@ class ValueNetwork():
 # hyperparameters and configurations
 learning_rate = 0.001
 gamma = 0.99  # discount factor for reward
-resume = False  # resume from previous checkpoint?
-render = False  # render the graphic ?
-is_train = True # training mode ?
-max_episode_number = 1000  # how many episode we want to run ?
+resume = True  # resume from previous checkpoint?
+render = True  # render the graphic ?
+is_train = False # training mode ?
+max_episode_number = 1500  # how many episode we want to run ?
 max_replay_memory = 2000 # maximum size of replay memory
 epsilon_decay_steps = 500 # epsilon decay over time until ?
 batch_size = 32 # training examples per batch

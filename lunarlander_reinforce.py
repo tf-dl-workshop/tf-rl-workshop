@@ -63,7 +63,7 @@ gamma = 0.99  # discount factor for reward
 resume = True  # resume from previous checkpoint?
 render = True  # render the graphic ?
 max_episode_number = 1000  # how many episode we want to run ?
-model_path = "_models/final/model.ckpt"  # path for saving the model
+model_path = "_models/reinforce/model.ckpt"  # path for saving the model
 
 
 def discount_rewards(r):
